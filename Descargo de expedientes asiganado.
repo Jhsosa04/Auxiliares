@@ -1,0 +1,149 @@
+// ==UserScript==
+// @name         Looking for - Descargo de expedientes
+// @namespace    jsmkg
+// @version      1.0
+// @description  Selecciona los expedientes de una persona en "Acuse expdte. para revisar" y pulsa "Aceptar toda la selección" tras confirmar.
+// @match        *://contraloria.grupopuntacana.com/modulo/dashboard.php*
+// @run-at       document-idle
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  function iniciar() {
+    var ID = 'lf-bot-descargo';
+    var previo = document.getElementById(ID);
+    if (previo) previo.remove();
+
+    /* Quita tildes, espacios dobles y mayúsculas para comparar nombres */
+    function norm(s) {
+      return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    /* Filas de expedientes: tienen checkbox y la casilla "Quien revisa?" */
+    function filas() {
+      var out = [];
+      document.querySelectorAll('tr').forEach(function (tr) {
+        var cb = tr.querySelector('input[type=checkbox]');
+        var campo = tr.querySelector('input[type=text], input:not([type]), select');
+        if (!cb || !campo) return;
+        var nombre = campo.tagName === 'SELECT'
+          ? (campo.options[campo.selectedIndex] || {}).text
+          : campo.value;
+        out.push({ tr: tr, cb: cb, nombre: (nombre || '').trim() });
+      });
+      return out;
+    }
+
+    function botonAceptar() {
+      var els = document.querySelectorAll('button, input[type=button], input[type=submit], a');
+      for (var i = 0; i < els.length; i++) {
+        var t = norm(els[i].innerText || els[i].textContent || els[i].value);
+        if (t.indexOf('aceptar toda') > -1) return els[i];
+      }
+      return null;
+    }
+
+    function marcar(fila, valor) {
+      if (fila.cb.checked !== valor) fila.cb.click();
+      fila.tr.style.outline = valor ? '2px solid #0ca64b' : '';
+    }
+
+    var lista = filas();
+    if (!lista.length || !botonAceptar()) return false;
+
+    /* Nombres disponibles con su cantidad */
+    var conteo = {};
+    lista.forEach(function (f) {
+      if (!f.nombre) return;
+      var k = norm(f.nombre);
+      if (!conteo[k]) conteo[k] = { nombre: f.nombre, n: 0 };
+      conteo[k].n++;
+    });
+    var nombres = Object.keys(conteo).sort().map(function (k) { return conteo[k]; });
+
+    /* Panel */
+    var p = document.createElement('div');
+    p.id = ID;
+    p.innerHTML =
+      '<style>' +
+      '#' + ID + '{position:fixed;right:20px;bottom:20px;z-index:2147483647;width:320px;background:#fff;' +
+      'border:1px solid #d6d6d6;border-top:5px solid #0ca64b;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);' +
+      'font:14px/1.4 Segoe UI,Arial,sans-serif;color:#222;padding:14px 16px}' +
+      '#' + ID + ' h3{margin:0 0 10px;font-size:16px;font-weight:600}' +
+      '#' + ID + ' select{width:100%;padding:7px;border:1px solid #bbb;border-radius:4px;font-size:14px;margin-bottom:10px}' +
+      '#' + ID + ' button{border:0;border-radius:4px;padding:8px 12px;font-size:14px;cursor:pointer;color:#fff}' +
+      '#' + ID + ' .sel{background:#3f5ce8;width:100%}' +
+      '#' + ID + ' .ok{background:#0ca64b}' +
+      '#' + ID + ' .no{background:#888;margin-left:6px}' +
+      '#' + ID + ' .x{position:absolute;top:8px;right:10px;background:none;color:#888;font-size:18px;padding:0}' +
+      '#' + ID + ' .msg{margin-top:12px;display:none}' +
+      '#' + ID + ' .fila{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}' +
+      '</style>' +
+      '<button class="x" title="Cerrar">×</button>' +
+      '<h3>Descargo de expedientes</h3>' +
+      '<select><option value="">¿A quién le harás el descargo?</option>' +
+      nombres.map(function (o) {
+        return '<option value="' + norm(o.nombre) + '">' + o.nombre + ' (' + o.n + ')</option>';
+      }).join('') +
+      '</select>' +
+      '<button class="sel">Seleccionar expedientes</button>' +
+      '<div class="msg"><div class="txt"></div>' +
+      '<div class="fila"><span>¿Confirmas el descargo?</span>' +
+      '<span><button class="ok">Confirmar</button><button class="no">Cancelar</button></span></div></div>';
+    document.body.appendChild(p);
+
+    var sel = p.querySelector('select'), msg = p.querySelector('.msg'), txt = p.querySelector('.txt');
+    var actual = '';
+
+    var pill = document.createElement('button');
+    pill.textContent = 'Descargo';
+    pill.style.cssText = 'position:fixed;right:20px;bottom:20px;z-index:2147483647;display:none;background:#0ca64b;color:#fff;border:0;border-radius:20px;padding:9px 18px;font:600 14px Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2)';
+    document.body.appendChild(pill);
+    p.querySelector('.x').onclick = function () { p.style.display = 'none'; pill.style.display = 'block'; };
+    pill.onclick = function () { pill.style.display = 'none'; p.style.display = 'block'; };
+
+    p.querySelector('.sel').onclick = function () {
+      actual = sel.value;
+      if (!actual) { alert('Elige un nombre primero.'); return; }
+      lista = filas();
+      var n = 0, primera = null;
+      lista.forEach(function (f) {
+        var es = norm(f.nombre) === actual;
+        marcar(f, es);
+        if (es) { n++; if (!primera) primera = f.tr; }
+      });
+      if (primera) primera.scrollIntoView({ block: 'center' });
+      txt.innerHTML = 'Seleccioné <b>' + n + '</b> expedientes de <b>' + conteo[actual].nombre + '</b>.';
+      p.querySelector('.fila').style.display = 'flex';
+      msg.style.display = 'block';
+    };
+
+    p.querySelector('.no').onclick = function () {
+      filas().forEach(function (f) { marcar(f, false); });
+      msg.style.display = 'none';
+    };
+
+    p.querySelector('.ok').onclick = function () {
+      var marcados = filas().filter(function (f) { return f.cb.checked; });
+      var ajenos = marcados.filter(function (f) { return norm(f.nombre) !== actual; });
+      if (!marcados.length) { alert('No hay expedientes seleccionados.'); return; }
+      if (ajenos.length) { alert('Hay ' + ajenos.length + ' expedientes marcados de otra persona. Pulsa Seleccionar de nuevo.'); return; }
+      var b = botonAceptar();
+      if (!b) { alert('No encontré el botón "Aceptar toda la selección".'); return; }
+      b.click();
+      txt.innerHTML = 'Descargo enviado: <b>' + marcados.length + '</b> expedientes de <b>' + conteo[actual].nombre + '</b>.';
+      p.querySelector('.fila').style.display = 'none';
+    };
+    return true;
+  }
+
+  /* La tabla puede tardar en cargar: reintenta durante unos 15 segundos */
+  var intentos = 0;
+  var t = setInterval(function () {
+    intentos++;
+    if (iniciar() || intentos > 30) clearInterval(t);
+  }, 500);
+})();
