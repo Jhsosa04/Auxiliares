@@ -1,0 +1,60 @@
+@@CustomName: '%RutaPDF%'
+Display.SelectFileDialog.SelectFile Title: $'''Selecciona el PDF escaneado''' FileFilter: $'''*.pdf''' IsTopMost: False CheckIfFileExists: True SelectedFile=> RutaPDF ButtonPressed=> ButtonPressed
+@@CustomName: 'RutaExcel'
+Display.SelectFileDialog.SelectFile Title: $'''Selecciona el Excel de activos''' FileFilter: $'''*.xlsx''' IsTopMost: False CheckIfFileExists: False SelectedFile=> RutaExcel ButtonPressed=> ButtonPressed2
+Folder.Create FolderPath: $'''C:\\BotActivos''' FolderName: $'''temp''' Folder=> NewFolder
+Pdf.ExtractImagesFromPDF.ExtractImages PDFFile: RutaPDF ImagesName: $'''pagina''' ImagesFolder: $'''C:\\BotActivos\\temp'''
+@@CustomName: '%Imagenes%'
+Folder.GetFiles Folder: $'''C:\\BotActivos\\temp''' FileFilter: $'''*''' IncludeSubfolders: False FailOnAccessDenied: True SortBy1: Folder.SortBy.Name SortDescending1: False SortBy2: Folder.SortBy.NoSort SortDescending2: False SortBy3: Folder.SortBy.NoSort SortDescending3: False Files=> Imagenes
+SET TextoPDF TO $'''%''%'''
+LOOP FOREACH Imagen IN Imagenes
+    OCR.ExtractTextWithOCR.ExtractTextFromFileWithTesseract ImageFile: Imagen Language: OCR.TesseractLanguage.Spanish ImageWidthMultiplier: 2 ImageHeightMultiplier: 2 OcrText=> TextoPagina
+    SET TextoPDF TO $'''%TextoPDF%
+%TextoPagina%'''
+END
+File.WriteText File: $'''C:\\BotActivos\\prueba_ocr.txt''' TextToWrite: TextoPDF AppendNewLine: True IfFileExists: File.IfFileExists.Overwrite Encoding: File.FileEncoding.UTF8
+Text.ParseText.RegexParseForFirstOccurrence Text: TextoPDF TextToFind: $'''(?<=PS)\\d{2}''' StartingPosition: 0 IgnoreCase: True Match=> Sociedad
+Text.ParseText.RegexParseForFirstOccurrence Text: TextoPDF TextToFind: $'''\\d{2}\\.\\d{2}\\.\\d{4}''' StartingPosition: 0 IgnoreCase: True Match=> FechaEMTexto
+IF IsEmpty(FechaEMTexto) THEN
+    Display.ShowMessageDialog.ShowMessage Title: $'''No se encontró la Fecha EM en el PDF''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed3
+    EXIT Code: 0 ErrorMessage: $'''Fallo'''
+END
+Text.ConvertTextToDateTime.ToDateTimeCustomFormat Text: FechaEMTexto CustomFormat: $'''dd.MM.yyyy''' DateTime=> FechaEM
+Text.ParseText.ParseForFirstOccurrence Text: TextoPDF TextToFind: $'''VALE DE ENTRADA''' StartingPosition: 0 IgnoreCase: True OccurrencePosition=> PosVale
+IF PosVale = (-1) THEN
+    SET PosVale TO TextoPDF.Length
+END
+Text.GetSubtext.GetSubtextFromStartTo Text: TextoPDF NumberOfChars: PosVale Subtext=> TextoEntrega
+Text.ParseText.RegexParse Text: TextoEntrega TextToFind: $'''(?m)^\\d{7}\\b''' StartingPosition: 0 IgnoreCase: False Matches=> Activos
+Text.ParseText.RegexParse Text: TextoEntrega TextToFind: $'''(?m)^NO TIENE''' StartingPosition: 0 IgnoreCase: True Matches=> Series
+Text.ParseText.RegexParseForFirstOccurrence Text: TextoPDF TextToFind: $'''(?<=Garant\\S*\\s+)\\d+''' StartingPosition: 0 IgnoreCase: True Match=> AniosTexto
+IF IsEmpty(AniosTexto) THEN
+    Display.InputDialog Title: $'''Garantía''' Message: $'''No encontré los años de garantía. ¿Cuántos años son?''' DefaultValue: 2 InputType: Display.InputType.SingleLine IsTopMost: False UserInput=> AniosTexto ButtonPressed=> ButtonPressed6
+END
+Text.ToNumber Text: AniosTexto Number=> Anios
+DateTime.Add DateTime: FechaEM TimeToAdd: Anios TimeUnit: DateTime.TimeUnit.Years ResultedDate=> FechaFin
+Variables.CreateNewDatatable InputTable: { ^['Column1', 'Column2', 'Column3', 'Column4'], [$'''Activo''', $'''Subnumero''', $'''Sociedad''', $'''Serie'''] } DataTable=> TablaAD
+Variables.DeleteRowFromDataTable DataTable: TablaAD RowIndex: 0
+Variables.CreateNewDatatable InputTable: { ^['Column1', 'Column2'], [$'''Inicio''', $'''Fin'''] } DataTable=> TablaEF
+Variables.DeleteRowFromDataTable DataTable: TablaEF RowIndex: 0
+LOOP LoopIndex FROM 0 TO Activos.Count - 1 STEP 1
+    SET Activo TO Activos[LoopIndex]
+    IF LoopIndex < Series.Count THEN
+        SET Serie TO Series[LoopIndex]
+    ELSE
+        SET Serie TO $'''REVISAR'''
+    END
+    Variables.AddRowToDataTable.AppendRowToDataTable DataTable: TablaAD RowToAdd: [Activo, '00', Sociedad, Serie]
+    Variables.AddRowToDataTable.AppendRowToDataTable DataTable: TablaEF RowToAdd: [FechaEM, FechaFin]
+END
+IF TablaAD.RowsCount = 0 THEN
+    Display.ShowMessageDialog.ShowMessage Title: $'''Bot Activos Fijos''' Message: $'''No se encontraron activos en el PDF. Revisa prueba_ocr.txt''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed4
+    EXIT Code: 0
+END
+Excel.LaunchExcel.LaunchAndOpenUnderExistingProcess Path: RutaExcel Visible: True ReadOnly: False UseMachineLocale: False Instance=> ExcelInstance
+Excel.GetFirstFreeColumnRow Instance: ExcelInstance FirstFreeColumn=> FirstFreeColumn FirstFreeRow=> FirstFreeRow
+Excel.WriteToExcel.WriteCell Instance: ExcelInstance Value: TablaAD Column: $'''A''' Row: FirstFreeRow
+Excel.WriteToExcel.WriteCell Instance: ExcelInstance Value: TablaEF Column: $'''E''' Row: FirstFreeRow
+Excel.CloseExcel.CloseAndSave Instance: ExcelInstance
+Folder.Delete Folder: $'''C:\\BotActivos\\temp'''
+Display.ShowMessageDialog.ShowMessage Title: $'''Listo. Se registraron %TablaAD.RowsCount% activos.''' Icon: Display.Icon.None Buttons: Display.Buttons.OK DefaultButton: Display.DefaultButton.Button1 IsTopMost: False ButtonPressed=> ButtonPressed5
